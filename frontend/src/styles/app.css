@@ -253,6 +253,20 @@ button {
 .mono { font-family: "IBM Plex Mono", monospace; }
 .err { color: #ff9b7a; } .ok { color: #d4c08a; }
 
+button.btn-ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+  font-weight: 400;
+}
+button.btn-ghost:hover { border-color: var(--hang-copper); color: var(--hang-copper); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+
+.row-picked { background: rgba(232, 168, 124, .08); }
+.batch-result { margin: .5rem 0 1rem; }
+.ok-row td { color: #d4c08a; }
+.err-row td { color: #ff9b7a; }
+
 .ruler-wrap {
   background: transparent;
   border: none;

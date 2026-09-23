@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.models import HangRail, RailPlacement, Store, WorkOrder
 from app.schemas.schemas import (
+    BatchHangItem,
+    BatchHangRequest,
+    BatchHangResult,
     HangRequest,
     OccupancyOut,
     OccupancySeg,
@@ -103,6 +106,131 @@ def hang(body: HangRequest, db: Session = Depends(get_db)):
         return order
 
     raise HTTPException(409, "挂杆空间不足")
+
+
+@api_router.post("/hang/batch", response_model=BatchHangResult)
+def hang_batch(body: BatchHangRequest, db: Session = Depends(get_db)):
+    # 空集合直接失败，且在任何写操作之前返回
+    if not body.order_ids:
+        raise HTTPException(400, "未选择工单")
+
+    unique_ids = list(dict.fromkeys(body.order_ids))
+    orders = [db.get(WorkOrder, oid) for oid in unique_ids]
+
+    items: list[BatchHangItem] = []
+    eligible: list[WorkOrder] = []
+    for oid, order in zip(unique_ids, orders):
+        if order is None:
+            items.append(
+                BatchHangItem(order_id=oid, ticket_code="", success=False, reason="工单不存在")
+            )
+            continue
+        if order.status not in ("ready", "overdue"):
+            items.append(
+                BatchHangItem(
+                    order_id=order.id,
+                    ticket_code=order.ticket_code,
+                    success=False,
+                    reason="工单状态不可上杆",
+                )
+            )
+            continue
+        eligible.append(order)
+
+    # 到期早的先套现网：按 due_at 升序逐个 First-Fit
+    eligible.sort(key=lambda o: (o.due_at, o.id))
+
+    # 本批已成功的占位也要计入占用，保证“先到期先占空隙”
+    occupied_cache: dict[int, list[Segment]] = {}
+    rails_cache: dict[int, list[HangRail]] = {}
+    now = datetime.utcnow()
+
+    def _rails_for(store_id: int) -> list[HangRail]:
+        if store_id not in rails_cache:
+            rail_q = select(HangRail).where(HangRail.store_id == store_id)
+            if body.rail_id:
+                rail_q = rail_q.where(HangRail.id == body.rail_id)
+            rails_cache[store_id] = list(db.scalars(rail_q.order_by(HangRail.id)).all())
+        return rails_cache[store_id]
+
+    def _occupied(rail_id: int) -> list[Segment]:
+        if rail_id not in occupied_cache:
+            active = db.scalars(
+                select(RailPlacement).where(
+                    RailPlacement.rail_id == rail_id, RailPlacement.active == 1
+                )
+            ).all()
+            occupied_cache[rail_id] = [Segment(p.start_cm, p.end_cm) for p in active]
+        return occupied_cache[rail_id]
+
+    for order in eligible:
+        rails = _rails_for(order.store_id)
+        if not rails:
+            items.append(
+                BatchHangItem(
+                    order_id=order.id,
+                    ticket_code=order.ticket_code,
+                    success=False,
+                    reason="无可用挂杆",
+                )
+            )
+            continue
+
+        placed = False
+        for rail in rails:
+            place = first_fit(rail.length_cm, _occupied(rail.id), order.length_cm)
+            if place is None:
+                continue
+            db.add(
+                RailPlacement(
+                    rail_id=rail.id,
+                    order_id=order.id,
+                    start_cm=place.start_cm,
+                    end_cm=place.end_cm,
+                )
+            )
+            # 同事务内立即让后续工单看到新占位（不提交）
+            db.flush()
+            _occupied(rail.id).append(Segment(place.start_cm, place.end_cm))
+            order.status = "hung"
+            order.hung_at = now
+            items.append(
+                BatchHangItem(
+                    order_id=order.id,
+                    ticket_code=order.ticket_code,
+                    success=True,
+                    rail_id=rail.id,
+                    rail_label=rail.label,
+                    start_cm=place.start_cm,
+                    end_cm=place.end_cm,
+                )
+            )
+            placed = True
+            break
+
+        if not placed:
+            items.append(
+                BatchHangItem(
+                    order_id=order.id,
+                    ticket_code=order.ticket_code,
+                    success=False,
+                    reason="挂杆空间不足",
+                )
+            )
+
+    # 一次性提交：部分成功时仅落库成功的占位，不因后单失败回滚先成功的工单
+    if any(it.success for it in items):
+        db.commit()
+
+    succeeded = sum(1 for it in items if it.success)
+    # 结果按票号（工单）稳定排列，便于和提交顺序对照
+    items.sort(key=lambda it: unique_ids.index(it.order_id))
+    return BatchHangResult(
+        requested=len(unique_ids),
+        succeeded=succeeded,
+        failed=len(items) - succeeded,
+        items=items,
+    )
 
 
 @api_router.post("/pickup", response_model=OrderOut)
