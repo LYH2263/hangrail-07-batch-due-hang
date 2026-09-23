@@ -33,6 +33,26 @@ class HangRequest(BaseModel):
     rail_id: int | None = None
 
 
+class BatchHangRequest(BaseModel):
+    order_ids: list[int]
+    rail_id: int | None = None
+
+
+class BatchHangItem(BaseModel):
+    order_id: int
+    ticket_code: str
+    success: bool
+    rail_id: int | None = None
+    rail_label: str | None = None
+    start_cm: float | None = None
+    end_cm: float | None = None
+    reason: str | None = None
+
+
+class BatchHangResult(BaseModel):
+    results: list[BatchHangItem]
+
+
 class PickupRequest(BaseModel):
     ticket_code: str
 

@@ -252,6 +252,23 @@ button {
 }
 .mono { font-family: "IBM Plex Mono", monospace; }
 .err { color: #ff9b7a; } .ok { color: #d4c08a; }
+.hint { color: var(--hang-muted); font-size: .82rem; }
+
+.batch-results {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: .75rem .9rem;
+  margin-bottom: 1rem;
+  background: rgba(232, 168, 124, .05);
+}
+.batch-results-title {
+  font-size: .85rem;
+  font-weight: 700;
+  color: var(--hang-copper);
+  margin-bottom: .5rem;
+}
+.batch-results .table th, .batch-results .table td { padding: .35rem .35rem; font-size: .85rem; }
+.toolbar button:disabled { opacity: .45; cursor: not-allowed; }
 
 .ruler-wrap {
   background: transparent;
